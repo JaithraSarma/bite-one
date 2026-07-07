@@ -53,6 +53,7 @@ services:
       OPENAI_API_KEY: ${LITELLM_SPEC_KEY}
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
       ENABLE_OLLAMA_API: "False"
+      ENABLE_SIGNUP: "True"
     volumes:
       - open-webui-data:/app/backend/data
 

@@ -125,7 +125,16 @@ never committed, never placed in GitHub secrets, and never leaves this machine.
    Record both keys somewhere safe; paste the `spec` key into `.env` as
    `LITELLM_SPEC_KEY`.
 5. `docker compose up -d open-webui`
-6. Open http://localhost:3000 and create the local admin account.
+6. Open http://localhost:3000 and create the local admin account (first
+   signup becomes admin). Note: `ENABLE_SIGNUP: "True"` must be present in
+   the compose env **on first boot** — Open WebUI persists config in its DB
+   after first launch and ignores later env changes. If signup is stuck
+   disabled, wipe the volume (`docker compose rm -sf open-webui;`
+   `docker volume rm biteone_open-webui-data`) and start again.
+7. Create the "SPA Spec" model preset: Workspace → Models → New. Base model
+   `claude-sonnet-4-6`, name `SPA Spec`, system prompt = the text below the
+   `---` line in `prompts/spa-spec-system-prompt.md`. (Or via API:
+   `POST /api/v1/models/create` with `{id, base_model_id, name, params.system}`.)
 
 ### Verify
 
