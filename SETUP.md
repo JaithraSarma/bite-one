@@ -155,5 +155,43 @@ docker compose down -v   # -v removes the named volumes (key DB, WebUI data)
 
 ---
 
+## 3. Dyad → LiteLLM on the gen key (T3)
+
+**Component:** Dyad desktop app (local, no cloud cost). Dyad is one of the two
+allowed non-open-source exceptions (authoring tool).
+
+### Rebuild
+
+1. Install Dyad from https://dyad.sh and launch it once.
+2. In Dyad: Settings → AI Providers → Add custom provider:
+   - Name: `LiteLLM (local)`
+   - API base URL: `http://localhost:4000/v1`
+   - API key: the `gen` virtual key ($5 budget) from
+     `scripts/create-virtual-keys.ps1`
+3. Add a model under that provider: API name `claude-sonnet-4-6`
+   (display name anything), context window 200000, max output 8192.
+4. Select that model as the active model.
+
+Dyad stores this in `%APPDATA%\dyad\sqlite.db` (tables
+`language_model_providers`, `language_models`) and the key in
+`%APPDATA%\dyad\user-settings.json` — both local files, outside this repo.
+
+### Verify
+
+Send any short prompt in a Dyad chat, then confirm the spend increment on the
+gen key:
+
+```
+curl "http://localhost:4000/key/info?key=<GEN_KEY>" -H "Authorization: Bearer <LITELLM_MASTER_KEY>"
+```
+
+### Teardown
+
+Remove the provider in Dyad's settings UI (or delete the rows from the two
+tables above), and delete the `litellm` entry from `providerSettings` in
+`user-settings.json`.
+
+---
+
 *(Sections for EC2, Supabase, Caddy, OIDC role, S3, CloudFront are appended as
 those tasks (T4–T10) are completed.)*
