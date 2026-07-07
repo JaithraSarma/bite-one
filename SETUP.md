@@ -193,5 +193,86 @@ tables above), and delete the `litellm` entry from `providerSettings` in
 
 ---
 
-*(Sections for EC2, Supabase, Caddy, OIDC role, S3, CloudFront are appended as
-those tasks (T4–T10) are completed.)*
+## 4. EC2 host (T4)
+
+**Resources (region ap-south-1):**
+
+| Resource | Value in this build | Notes |
+|---|---|---|
+| Key pair | `bite-one` (ed25519) | private key at `~/.ssh/bite-one.pem`, never committed |
+| Security group | `bite-one-sg` | ingress: tcp/443 from 0.0.0.0/0, tcp/22 from `<MY_IP>/32` only. Nothing else. |
+| Instance | `t3.large`, Ubuntu 24.04 LTS, 30 GB gp3 | tags: Name=bite-one, Project=bite-one, CostCenter=SOW-KH-002, Owner=JaithraSarma |
+
+Cost: ~$0.10/hr while running (+ ~$2.70/mo for the 30 GB volume). The billing
+budget (section 1) must exist before this step.
+
+### Rebuild
+
+```
+# your public IP (for the SSH rule)
+$MYIP = (Invoke-RestMethod https://checkip.amazonaws.com).Trim()
+
+# current Ubuntu 24.04 AMI for the region
+$AMI = aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id --query Parameter.Value --output text
+
+# key pair
+aws ec2 create-key-pair --key-name bite-one --key-type ed25519 --query KeyMaterial --output text | Out-File -Encoding ascii "$env:USERPROFILE\.ssh\bite-one.pem"
+icacls "$env:USERPROFILE\.ssh\bite-one.pem" /inheritance:r /grant:r "${env:USERNAME}:R"
+
+# security group in the default VPC
+$VPC = aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text
+$SG = aws ec2 create-security-group --group-name bite-one-sg --description "Bite One: 443 world, 22 from owner IP only" --vpc-id $VPC --query GroupId --output text
+aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port 443 --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port 22 --cidr "$MYIP/32"
+
+# user-data installs Docker Engine + compose plugin
+@'
+#!/bin/bash
+set -e
+curl -fsSL https://get.docker.com | sh
+usermod -aG docker ubuntu
+systemctl enable --now docker
+'@ | Out-File -Encoding ascii user-data.sh
+
+# 30 GB gp3 root volume (Supabase images need > the 8 GB default)
+'[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3","DeleteOnTermination":true}}]' | Out-File -Encoding ascii bdm.json
+
+$SUBNET = aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" --query 'Subnets[0].SubnetId' --output text
+$IID = aws ec2 run-instances --image-id $AMI --instance-type t3.large --key-name bite-one `
+  --security-group-ids $SG --subnet-id $SUBNET --user-data file://user-data.sh `
+  --block-device-mappings file://bdm.json `
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=bite-one},{Key=Project,Value=bite-one},{Key=CostCenter,Value=SOW-KH-002}]' `
+  --query 'Instances[0].InstanceId' --output text
+aws ec2 wait instance-running --instance-ids $IID
+aws ec2 describe-instances --instance-ids $IID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text
+```
+
+### Verify
+
+```
+ssh -i ~/.ssh/bite-one.pem ubuntu@<PUBLIC_IP> "docker --version && sudo docker compose version"
+# SG has exactly two ingress rules:
+aws ec2 describe-security-groups --group-names bite-one-sg --query "SecurityGroups[0].IpPermissions"
+```
+
+SSH from any IP other than `<MY_IP>` times out (no rule matches). Postgres and
+Studio are never exposed: only 443 (Caddy) and 22 (owner IP) are reachable.
+
+### Teardown
+
+```
+$IID = aws ec2 describe-instances --filters "Name=tag:Name,Values=bite-one" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text
+aws ec2 terminate-instances --instance-ids $IID
+aws ec2 wait instance-terminated --instance-ids $IID   # volume auto-deletes (DeleteOnTermination)
+aws ec2 delete-security-group --group-name bite-one-sg
+aws ec2 delete-key-pair --key-name bite-one
+Remove-Item "$env:USERPROFILE\.ssh\bite-one.pem"
+```
+
+**This build:** instance `i-07c435d2dea9ad23f`, SG `sg-01a0b3df69d6a2da3`,
+public IP `65.0.169.23` (changes on stop/start — sslip.io hostname changes with it).
+
+---
+
+*(Sections for Supabase, Caddy, OIDC role, S3, CloudFront are appended as
+those tasks (T5–T10) are completed.)*
