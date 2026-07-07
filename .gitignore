@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+*.env.local
+
+# Runtime data
+open-webui-data/
+litellm-db-data/
+
+# Node
+node_modules/
+dist/
+
+# OS
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Playwright
+test-results/
+playwright-report/
