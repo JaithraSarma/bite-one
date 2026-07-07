@@ -1,0 +1,17 @@
+{$PROXY_DOMAIN} {
+    @supabase_api path /auth/v1/* /rest/v1/* /graphql/v1 /realtime/v1/* /storage/v1/* /functions/v1/* /mcp /sso/*
+
+    handle @supabase_api {
+        reverse_proxy kong:8000
+    }
+
+    # SOW-KH-002 hard constraint: Studio is NOT internet-reachable.
+    # It is served only on the host loopback (docker-compose.bite-one.yml)
+    # and accessed via SSH tunnel. Everything that is not the Supabase API
+    # gets a 404 here.
+    handle {
+        respond "Not found" 404
+    }
+
+    header -server
+}

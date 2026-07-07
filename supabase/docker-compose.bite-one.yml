@@ -1,0 +1,14 @@
+# Bite One security overlay (SOW-KH-002)
+# - Studio published on host loopback ONLY -> reachable exclusively through
+#   `ssh -L 3000:localhost:3000 ubuntu@<EC2-IP>` (never from the internet)
+# - Supavisor (Postgres session/transaction pooler) bound to loopback instead
+#   of all interfaces: defense-in-depth on top of the security group
+services:
+  studio:
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  supavisor:
+    ports: !reset
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+      - "127.0.0.1:${POOLER_PROXY_PORT_TRANSACTION}:6543"
