@@ -126,7 +126,10 @@ generation), `claude-haiku-4-5`, `claude-opus-4-8`. Authoring tool: Dyad
 4. Create the two budgeted virtual keys:
    `pwsh ./scripts/create-virtual-keys.ps1`
    - `spec` — $2 budget (used by Open WebUI)
-   - `gen`  — $5 budget (used by Dyad)
+   - `gen`  — $5 budget (used by Dyad; raised to $15 during the build)
+   The amounts are our own cost-control choice — the SOW requires budget
+   *enforcement* (AC 8), not specific numbers. Raise anytime via
+   `POST /key/update` with the master key (see RUNBOOK "Check LLM spend").
    Record both keys somewhere safe; paste the `spec` key into `.env` as
    `LITELLM_SPEC_KEY`.
 5. `docker compose up -d open-webui`

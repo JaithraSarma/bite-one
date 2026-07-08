@@ -9,12 +9,21 @@ One page. For rebuild-from-scratch or teardown, see [SETUP.md](SETUP.md).
    `specs/`.
 2. **Generate** — Dyad → model "Claude Sonnet 4.6 (gen key)" → paste the spec
    with the wiring rules from `prompts/` → app appears in `~/dyad-apps/<name>`.
-3. **Import** — copy the app into `app/` on a branch (convert to npm:
-   `npm install` for the lockfile), keep the Playwright smoke test passing.
-   If the app needs new tables/policies, add them as `sql/NNN_name.sql` in the
-   same branch — schema rides the same PR as the code.
-4. **PR** — push the branch, open a PR. The `build-and-smoke` check must go
-   green; direct pushes to `master` are rejected for everyone.
+3. **Import + PR** — one command:
+
+   ```
+   pwsh scripts/import-app.ps1 -AppDir "$env:USERPROFILE\dyad-apps\<name>" `
+        [-Spec <spec.md>] [-Sql <schema.sql>]
+   ```
+
+   It replaces `app/` with the generated app (keeps the test harness),
+   converts to npm, **fetches the API URL + anon key into `app/.env`
+   automatically** (from the GitHub repo variables — no keys typed by hand),
+   auto-numbers any SQL into `sql/`, runs the exact smoke test CI runs,
+   pushes the branch, and opens the PR. The smoke test is app-agnostic
+   (expected title is read from `index.html`), so no test edits per app.
+4. **CI gate** — the `build-and-smoke` check must go green; direct pushes
+   to `master` are rejected for everyone.
 5. **Merge** — a human merges. GitHub Actions assumes the OIDC role, builds,
    syncs to S3, invalidates CloudFront. Live at the CloudFront URL in ~1 min.
    Any new `sql/*.sql` is applied to the database automatically within ~2 min
@@ -83,6 +92,20 @@ curl "http://localhost:4000/key/info?key=<KEY>" -H "Authorization: Bearer <LITEL
 
 or open the dashboard: http://localhost:4000/ui (login with the master key).
 A key over budget returns `budget_exceeded` — other keys are unaffected.
+
+The SOW requires budget *enforcement*, not specific amounts — the caps are
+ours to set. If a key runs dry mid-work (Dyad stops generating), raise it:
+
+```
+# bash / Git Bash:
+curl -X POST http://localhost:4000/key/update \
+  -H "Authorization: Bearer <LITELLM_MASTER_KEY>" -H "Content-Type: application/json" \
+  -d '{"key": "<THE_KEY>", "max_budget": 15}'
+# PowerShell: put the JSON in a file and pass -d "@file.json" (quoting rules).
+```
+
+Takes effect immediately — no restart, no new key, Dyad picks up where it
+left off.
 
 ## Supabase Studio (SSH tunnel only — never public)
 

@@ -1,0 +1,110 @@
+#requires -Version 7
+<#
+Step-5 automation (SOW-KH-002): import a Dyad-generated app into app/, wire
+the test harness, fetch the runtime env automatically, verify locally with
+the exact test CI runs, push the branch, and open the PR.
+
+After this script, the ONLY remaining human action is reviewing/merging the
+PR on GitHub (the SOW's human gate).
+
+Usage:
+  pwsh scripts/import-app.ps1 -AppDir "$env:USERPROFILE\dyad-apps\my-app" `
+      [-Spec specs\my-app-spec.md] [-Sql path\to\schema.sql] [-Branch feat/my-app]
+
+  -AppDir  the app Dyad generated (must contain package.json + index.html)
+  -Spec    optional: spec file to commit into specs/ alongside the app
+  -Sql     optional: schema/RLS SQL — auto-numbered into sql/NNN_<app>.sql,
+           applied to the database automatically ~2 min after merge
+  -Branch  optional: branch name (default feat/<app-slug>)
+#>
+param(
+  [Parameter(Mandatory)][string]$AppDir,
+  [string]$Spec,
+  [string]$Sql,
+  [string]$Branch
+)
+$ErrorActionPreference = "Stop"
+$repo = "JaithraSarma/bite-one"
+Set-Location (Split-Path $PSScriptRoot -Parent)
+
+# -- 0. sanity ----------------------------------------------------------------
+if (-not (Test-Path "$AppDir\package.json")) { throw "$AppDir has no package.json" }
+if (-not (Test-Path "$AppDir\index.html"))   { throw "$AppDir has no index.html (expected a Vite app)" }
+if (git status --porcelain) { throw "working tree not clean - commit or stash first" }
+
+$title = ([regex]::Match((Get-Content "$AppDir\index.html" -Raw), '<title>([^<]*)</title>').Groups[1].Value).Trim()
+if (-not $title) { throw "index.html has no <title> - the Dyad wiring block requires one" }
+$slug = ($title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+if (-not $Branch) { $Branch = "feat/$slug" }
+Write-Host "Importing '$title'  ->  branch $Branch"
+
+# -- 1. branch off fresh master -------------------------------------------------
+git checkout master | Out-Null
+git pull --ff-only origin master | Out-Null
+git checkout -b $Branch
+
+# -- 2. replace app/ source, keep the repo's test harness ----------------------
+$keep = @("tests", "playwright.config.ts")
+Get-ChildItem app -Force | Where-Object { $keep -notcontains $_.Name } |
+  Remove-Item -Recurse -Force
+$exclude = @("node_modules", ".git", "dist", "pnpm-lock.yaml", "package-lock.json")
+Get-ChildItem $AppDir -Force |
+  Where-Object { $exclude -notcontains $_.Name -and $_.Name -notlike ".env*" } |
+  Copy-Item -Destination app -Recurse -Force
+
+# -- 3. normalize package.json: npm + pinned Playwright harness ----------------
+$pkg = Get-Content app\package.json -Raw | ConvertFrom-Json
+$pkg.name = $slug
+if (-not $pkg.PSObject.Properties["scripts"]) { $pkg | Add-Member scripts ([pscustomobject]@{}) }
+$pkg.scripts | Add-Member -Force -NotePropertyName "test" -NotePropertyValue "playwright test"
+if (-not $pkg.PSObject.Properties["devDependencies"]) { $pkg | Add-Member devDependencies ([pscustomobject]@{}) }
+$pkg.devDependencies | Add-Member -Force -NotePropertyName "@playwright/test" -NotePropertyValue "1.57.0"
+$pkg | ConvertTo-Json -Depth 16 | Set-Content app\package.json -Encoding utf8
+
+# -- 4. runtime env: fetch API URL + anon key automatically --------------------
+# (anon key is public-by-design; app/.env is gitignored. CI/deploy read the
+#  same values from GitHub repo variables, so local == CI == production.)
+$url  = gh api "repos/$repo/actions/variables/VITE_SUPABASE_URL"      --jq .value
+$anon = gh api "repos/$repo/actions/variables/VITE_SUPABASE_ANON_KEY" --jq .value
+@("VITE_SUPABASE_URL=$url", "VITE_SUPABASE_ANON_KEY=$anon") |
+  Set-Content app\.env -Encoding ascii
+Write-Host "app/.env written from GitHub repo variables"
+
+# -- 5. optional artifacts: spec + auto-numbered migration ---------------------
+if ($Spec) { Copy-Item $Spec ("specs\" + (Split-Path $Spec -Leaf)) -Force }
+if ($Sql) {
+  $max = (Get-ChildItem sql\[0-9][0-9][0-9]_*.sql |
+    ForEach-Object { [int]$_.Name.Substring(0, 3) } |
+    Measure-Object -Maximum).Maximum
+  $next = "{0:000}" -f ($max + 1)
+  Copy-Item $Sql "sql\${next}_$slug.sql"
+  Write-Host "migration staged as sql/${next}_$slug.sql (auto-applies ~2 min after merge)"
+}
+
+# -- 6. install + verify locally (the exact test CI runs) ----------------------
+Push-Location app
+npm install --no-audit --no-fund
+if ($LASTEXITCODE) {
+  Write-Host "retrying with --legacy-peer-deps (template peer conflicts)"
+  npm install --no-audit --no-fund --legacy-peer-deps
+  if ($LASTEXITCODE) { Pop-Location; throw "npm install failed" }
+}
+npx playwright install chromium
+npm test
+if ($LASTEXITCODE) { Pop-Location; throw "smoke test failed - fix the app, then re-run" }
+Pop-Location
+
+# -- 7. push + PR (merge stays human) -------------------------------------------
+git add app specs sql
+git commit -m "feat: import $title from Dyad"
+git push -u origin $Branch
+gh pr create --repo $repo --title "Import $title" --body @"
+Generated by Dyad, imported by ``scripts/import-app.ps1``.
+
+- Smoke test passed locally (same test CI runs).
+- ``app/.env`` was built automatically from repo variables (not committed).
+$(if ($Sql) { "- Includes a schema migration; it auto-applies ~2 min after merge." })
+
+CI must go green; a human reviews and merges — that click deploys.
+"@
+Write-Host "`nDONE. The only remaining human step is reviewing/merging the PR above."
