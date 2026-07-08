@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         if: steps.app.outputs.present == 'true'
         working-directory: app
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build
         if: steps.app.outputs.present == 'true'
