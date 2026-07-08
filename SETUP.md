@@ -420,5 +420,153 @@ sudo docker exec -i supabase-db psql -U postgres -d postgres -c "drop table if e
 
 ---
 
-*(Sections for OIDC role, S3, CloudFront are appended as tasks T8–T10 are
-completed.)*
+## 8. GitHub repo + protected branch (T8)
+
+**Resources (GitHub, free):** repo `JaithraSarma/bite-one` (public — branch
+protection requires a public repo on the Free plan), branch protection on
+`master`, and two Actions **variables** (not secrets):
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. The anon key is public by
+design — it ships inside the client JS bundle; RLS is the security boundary.
+
+### Rebuild
+
+```
+gh repo create <owner>/bite-one --public --source . --push
+gh variable set VITE_SUPABASE_URL --body "https://api.<EC2_IP>.sslip.io"
+gh variable set VITE_SUPABASE_ANON_KEY --body "<ANON_KEY>"
+# branch protection (after the first commit containing .github/workflows):
+gh api -X PUT repos/<owner>/bite-one/branches/master/protection --input - <<'JSON'
+{
+  "required_status_checks": { "strict": true, "contexts": ["build-and-smoke"] },
+  "enforce_admins": true,
+  "required_pull_request_reviews": { "required_approving_review_count": 0 },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+JSON
+```
+
+### Deviation (D-S1) from SOW v1.5
+
+The SOW assumes a client-provided GitHub org with a bot account and a named
+human approver. This build runs under a single personal account
+(`JaithraSarma`) at the owner's instruction, so:
+
+- `required_approving_review_count` is **0** (GitHub forbids self-approval,
+  and no second account exists). Direct pushes are still rejected for
+  everyone including admins, CI is still a required check, and every merge is
+  a deliberate human action through a PR.
+- "Bot cannot approve or merge" is not demonstrable — no bot account exists.
+  In a client org, set `required_approving_review_count: 1` and do NOT grant
+  the bot the ability to approve (it's a non-collaborator or has no review
+  permission), which restores full AC 5.
+
+### Verify
+
+```
+git commit --allow-empty -m test && git push   # -> GH006 rejected
+gh secret list                                  # -> empty (AC 9)
+```
+
+### Teardown
+
+`gh repo delete <owner>/bite-one` (variables and protection go with it).
+
+---
+
+## 9–10. CI + OIDC deploy to S3/CloudFront (T9, T10)
+
+**Resources:**
+
+| Resource | Value in this build | Cost |
+|---|---|---|
+| S3 bucket | `bite-one-spa-578257747901` (private; BlockPublicAccess all-on) | pennies |
+| CloudFront OAC | `bite-one-oac` (`EWEORB3XKBKL0`) | free |
+| CloudFront distribution | `E2K8F419SW31FK` → `d13x7u80swb2x7.cloudfront.net` (PriceClass_200, default domain) | pennies |
+| IAM OIDC provider | `token.actions.githubusercontent.com` | free |
+| IAM role | `bite-one-deploy` | free |
+
+**OIDC role trust policy (D5)** — locked to this repo AND branch, no wildcard:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com" },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": "repo:JaithraSarma/bite-one:ref:refs/heads/master"
+      }
+    }
+  }]
+}
+```
+
+**Role permissions (inline `bite-one-deploy-perms`):** `s3:PutObject` +
+`s3:DeleteObject` on `arn:aws:s3:::<bucket>/*`, `s3:ListBucket` on the bucket,
+`cloudfront:CreateInvalidation` on the one distribution. Nothing else.
+
+### Rebuild
+
+```
+# bucket (private)
+aws s3api create-bucket --bucket bite-one-spa-<ACCOUNT_ID> --region ap-south-1 \
+  --create-bucket-configuration LocationConstraint=ap-south-1
+aws s3api put-public-access-block --bucket bite-one-spa-<ACCOUNT_ID> \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+# OIDC provider + role
+aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com
+aws iam create-role --role-name bite-one-deploy --assume-role-policy-document file://trust-policy.json
+aws iam put-role-policy --role-name bite-one-deploy --policy-name bite-one-deploy-perms --policy-document file://deploy-perms.json
+
+# CloudFront: OAC + distribution (default domain, OAC to the bucket,
+# 403/404 -> /index.html for SPA routing), then bucket policy allowing
+# principal cloudfront.amazonaws.com with AWS:SourceArn = distribution ARN.
+aws cloudfront create-origin-access-control --origin-access-control-config \
+  Name=bite-one-oac,SigningProtocol=sigv4,SigningBehavior=always,OriginAccessControlOriginType=s3
+aws cloudfront create-distribution --distribution-config file://distconfig.json
+aws s3api put-bucket-policy --bucket bite-one-spa-<ACCOUNT_ID> --policy file://bucket-policy.json
+```
+
+The exact JSON files used by this build are reproduced in the repo history
+(commit `2aa07f0` context) and in `.github/workflows/deploy.yml`, which
+contains the account-specific ARNs.
+
+### Verify (AC 6, 7, 9)
+
+1. PR with a failing test → `build-and-smoke` red → merge blocked.
+2. Fix commit → green. Merge → `deploy` workflow runs (OIDC, no secrets) →
+   CloudFront URL serves the new build well within 5 minutes.
+3. `gh secret list` is empty; bucket rejects direct public access
+   (only CloudFront's OAC may `GetObject`).
+
+### Teardown
+
+```
+aws s3 rm s3://bite-one-spa-<ACCOUNT_ID> --recursive
+aws s3api delete-bucket --bucket bite-one-spa-<ACCOUNT_ID>
+# CloudFront: disable first, wait Deployed, then delete
+aws cloudfront get-distribution-config --id <DIST_ID>   # take ETag, set Enabled=false
+aws cloudfront update-distribution --id <DIST_ID> --if-match <ETAG> --distribution-config file://disabled.json
+aws cloudfront wait distribution-deployed --id <DIST_ID>
+aws cloudfront delete-distribution --id <DIST_ID> --if-match <NEW_ETAG>
+aws cloudfront delete-origin-access-control --id <OAC_ID> --if-match <OAC_ETAG>
+aws iam delete-role-policy --role-name bite-one-deploy --policy-name bite-one-deploy-perms
+aws iam delete-role --role-name bite-one-deploy
+aws iam delete-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
+```
+
+---
+
+## Full-account teardown order
+
+1. Section 9–10 teardown (CloudFront, S3, IAM role, OIDC provider)
+2. Section 4 teardown (EC2 instance, security group, key pair) — removes
+   Supabase and Caddy with it
+3. Section 8 teardown (GitHub repo) — optional; the repo is the deliverable
+4. Section 1 teardown (budget) — last, after billing settles
