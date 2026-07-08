@@ -1,0 +1,9 @@
+# RLS probe run - 2026-07-08 08:49 IST against https://api.13.201.34.229.sslip.io
+PASS  userA sees their seeded rows — 2 rows
+PASS  every row visible to userA belongs to userA
+PASS  userB list query returns zero rows — 0 rows
+PASS  userB direct fetch of userA's row ids returns zero rows — []
+PASS  userB cannot insert a row owned by userA (WITH CHECK) — HTTP 403
+
+RLS PROBE: ALL ASSERTIONS PASS
+

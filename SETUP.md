@@ -385,5 +385,40 @@ to clean up (Let's Encrypt certs expire on their own).
 
 ---
 
+## 7. Schema + RLS + two-user probe (T7 / D4)
+
+**Components (no new cloud resources):**
+
+- `sql/001_notes_rls.sql` — `public.notes` table (id, user_id → auth.users,
+  content, created_at) with owner-only RLS on all four verbs; `anon` revoked
+  entirely; `user_id` defaults to `auth.uid()`.
+- `scripts/seed-test-users.sh` — creates test users
+  `usera@biteone.test` / `userb@biteone.test` (GoTrue admin API) and seeds two
+  rows for userA. Test-only credentials; this backend never holds real data.
+- `scripts/rls-probe.mjs` — the two-user isolation probe (Node 18+).
+- `docs/rls-probe-run.txt` — committed output of a passing run (AC 4).
+
+### Rebuild + Verify
+
+```
+# on the EC2 host
+cd ~/bite-one
+sudo docker exec -i supabase-db psql -U postgres -d postgres < sql/001_notes_rls.sql
+cd supabase && sh ../scripts/seed-test-users.sh
+
+# from any machine (Node 18+)
+node scripts/rls-probe.mjs https://api.<EC2_IP>.sslip.io <ANON_KEY>
+# expect: all assertions PASS
+```
+
+### Teardown
+
+```
+sudo docker exec -i supabase-db psql -U postgres -d postgres -c "drop table if exists public.notes cascade;"
+# test users can be deleted in Studio (Auth) or via the GoTrue admin API
+```
+
+---
+
 *(Sections for OIDC role, S3, CloudFront are appended as tasks T8–T10 are
 completed.)*
