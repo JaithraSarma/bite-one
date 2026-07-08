@@ -274,5 +274,72 @@ public IP `65.0.169.23` (changes on stop/start — sslip.io hostname changes wit
 
 ---
 
-*(Sections for Supabase, Caddy, OIDC role, S3, CloudFront are appended as
-those tasks (T5–T10) are completed.)*
+## 5. Self-hosted Supabase on the EC2 host (T5)
+
+**Component:** official Supabase Docker stack, vendored into this repo at
+`supabase/` (upstream `supabase/supabase` `docker/` dir @ commit `8f5ba52`,
+all 11 images version-pinned) plus two Bite One modifications:
+
+- `supabase/docker-compose.bite-one.yml` — Studio and Supavisor bound to the
+  host **loopback only** (Studio reachable exclusively via SSH tunnel)
+- `supabase/volumes/proxy/caddy/Caddyfile` — API paths only; anything else
+  (including Studio) returns 404 at the proxy (see T6)
+
+All secrets are generated on the server into `supabase/.env` (gitignored by
+the vendored `supabase/.gitignore`) — JWT secret, anon/service-role JWTs,
+Postgres and dashboard passwords, encryption keys. Nothing is a default value.
+
+### Rebuild (on the EC2 host from T4)
+
+```
+ssh -i ~/.ssh/bite-one.pem ubuntu@<EC2_IP>
+git clone https://github.com/JaithraSarma/bite-one.git
+cd bite-one/supabase
+cp .env.example .env
+sh utils/generate-keys.sh --update-env     # generates ALL secrets, no defaults
+sed -i \
+  -e "s|^COMPOSE_FILE=.*$|COMPOSE_FILE=docker-compose.yml:docker-compose.bite-one.yml|" \
+  -e "s|^PROXY_DOMAIN=.*$|PROXY_DOMAIN=api.<EC2_IP>.sslip.io|" \
+  -e "s|^SUPABASE_PUBLIC_URL=.*$|SUPABASE_PUBLIC_URL=https://api.<EC2_IP>.sslip.io|" \
+  -e "s|^API_EXTERNAL_URL=.*$|API_EXTERNAL_URL=https://api.<EC2_IP>.sslip.io/auth/v1|" \
+  -e "s|^ENABLE_EMAIL_AUTOCONFIRM=.*$|ENABLE_EMAIL_AUTOCONFIRM=true|" \
+  .env
+sudo docker compose pull
+sudo docker compose up -d
+```
+
+`ENABLE_EMAIL_AUTOCONFIRM=true` because no SMTP is configured (test users
+only; a real deployment would configure SMTP and leave this false).
+
+### Verify
+
+```
+sudo docker compose ps          # every service "(healthy)"
+# REST through Kong (anon key reaches PostgREST; note /rest/v1/ root is
+# admin-only in this Kong config — use the service key for the OpenAPI root):
+ANON=$(grep '^ANON_KEY=' .env | cut -d= -f2)
+curl "http://localhost:8000/rest/v1/some_table" -H "apikey: $ANON" -H "Authorization: Bearer $ANON"
+# Studio ONLY via SSH tunnel (from workstation):
+ssh -i ~/.ssh/bite-one.pem -L 3000:localhost:3000 ubuntu@<EC2_IP>
+# then open http://localhost:3000 — and confirm http://<EC2_IP>:3000 times out
+```
+
+### Notes
+
+- The instance public IP changes on stop/start; after a restart run
+  `sed -i "s|<OLD_IP>|<NEW_IP>|g" .env && sudo docker compose up -d`.
+- Postgres is never exposed: Supavisor binds to loopback and the security
+  group only opens 443/22 anyway.
+
+### Teardown
+
+```
+cd bite-one/supabase && sudo docker compose down -v   # removes db volumes
+```
+
+(Terminating the EC2 instance — T4 teardown — removes everything as well.)
+
+---
+
+*(Sections for Caddy TLS, OIDC role, S3, CloudFront are appended as tasks
+T6–T10 are completed.)*
