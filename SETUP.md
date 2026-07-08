@@ -108,6 +108,11 @@ aws budgets delete-budget --account-id <ACCOUNT_ID> --budget-name bite-one-month
 The Anthropic API key lives ONLY in the local `.env` file (gitignored). It is
 never committed, never placed in GitHub secrets, and never leaves this machine.
 
+**Model record (SOW §6):** the developer's own Anthropic API key, routed
+through LiteLLM. Models exposed: `claude-sonnet-4-6` (used for both spec and
+generation), `claude-haiku-4-5`, `claude-opus-4-8`. Authoring tool: Dyad
+(LiteLLM-routed on the `gen` key — no D-S2 deviation needed).
+
 ### Rebuild
 
 1. Clone this repo and enter it.
