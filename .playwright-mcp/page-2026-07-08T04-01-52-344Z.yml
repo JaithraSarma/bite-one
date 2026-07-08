@@ -1,0 +1,20 @@
+- generic [ref=e33]:
+  - banner [ref=e34]:
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - img [ref=e38]
+        - generic [ref=e45]: QuickNotes
+      - generic [ref=e46]:
+        - generic [ref=e47]: livecheck@biteone.test
+        - button "Log Out" [ref=e48] [cursor=pointer]
+  - main [ref=e49]:
+    - generic [ref=e50]:
+      - textbox "What's on your mind? (Ctrl+Enter to save)" [active] [ref=e51]
+      - button "Add note" [disabled] [ref=e53]
+    - list [ref=e65]:
+      - listitem [ref=e69]:
+        - paragraph [ref=e70]: Second note - persistence check via EC2 Postgres
+        - paragraph [ref=e71]: Jul 8, 2026, 9:31 AM
+      - listitem [ref=e66]:
+        - paragraph [ref=e67]: First live note from the CloudFront deployment
+        - paragraph [ref=e68]: Jul 8, 2026, 9:31 AM
