@@ -11,12 +11,31 @@ One page. For rebuild-from-scratch or teardown, see [SETUP.md](SETUP.md).
    with the wiring rules from `prompts/` → app appears in `~/dyad-apps/<name>`.
 3. **Import** — copy the app into `app/` on a branch (convert to npm:
    `npm install` for the lockfile), keep the Playwright smoke test passing.
+   If the app needs new tables/policies, add them as `sql/NNN_name.sql` in the
+   same branch — schema rides the same PR as the code.
 4. **PR** — push the branch, open a PR. The `build-and-smoke` check must go
    green; direct pushes to `master` are rejected for everyone.
 5. **Merge** — a human merges. GitHub Actions assumes the OIDC role, builds,
    syncs to S3, invalidates CloudFront. Live at the CloudFront URL in ~1 min.
+   Any new `sql/*.sql` is applied to the database automatically within ~2 min
+   (see "Database migrations" below) — nothing to run by hand.
 
 **Live URL:** https://d13x7u80swb2x7.cloudfront.net
+
+## Database migrations (automatic)
+
+A cron on the EC2 host (user `ubuntu`) pulls `master` every 2 minutes and runs
+`scripts/apply-migrations.sh`, which applies any not-yet-applied `sql/*.sql`
+in filename order — each file in a single transaction, recorded in
+`public._migrations` so it runs exactly once.
+
+- **Add a migration:** commit `sql/NNN_descriptive_name.sql` (next number) in
+  your PR. Write it idempotent (`IF NOT EXISTS` / `DROP POLICY IF EXISTS`)
+  as a second line of defense. Merged → live in ≤2 minutes.
+- **Check what's applied:** on the host,
+  `docker exec supabase-db psql -U postgres -tAc 'select * from public._migrations'`
+- **Logs:** `/home/ubuntu/migrate.log` on the host.
+- **Never edit an applied file** — it won't re-run; add a new numbered file.
 
 ## Start / stop the EC2 host (save money when idle)
 
