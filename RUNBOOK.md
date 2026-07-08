@@ -56,7 +56,22 @@ gh variable set VITE_SUPABASE_URL --body "https://api.<NEW_IP>.sslip.io" --repo 
 
 then re-deploy (any merge to master, or `gh workflow run` is not configured —
 push a trivial PR) so the SPA points at the new API hostname. Caddy fetches a
-fresh certificate for the new sslip.io name automatically.
+fresh certificate for the new sslip.io name automatically. The auto-migration
+cron survives stop/start unchanged (it references the repo path, not the IP).
+
+If you also disabled the CloudFront distribution while pausing, re-enable it
+(takes ~5 min to propagate; while disabled the URL doesn't resolve):
+
+```
+$out = aws cloudfront get-distribution-config --id E2K8F419SW31FK | ConvertFrom-Json
+$cfg = $out.DistributionConfig; $cfg.Enabled = $true
+$cfg | ConvertTo-Json -Depth 32 | Set-Content cf.json -Encoding utf8
+aws cloudfront update-distribution --id E2K8F419SW31FK --distribution-config file://cf.json --if-match $out.ETag
+Remove-Item cf.json
+```
+
+(Disabling it while paused is optional — an enabled but idle distribution
+costs $0; only requests/transfer are billed.)
 
 ## Check LLM spend (LiteLLM)
 
