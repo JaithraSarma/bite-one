@@ -341,5 +341,49 @@ cd bite-one/supabase && sudo docker compose down -v   # removes db volumes
 
 ---
 
-*(Sections for Caddy TLS, OIDC role, S3, CloudFront are appended as tasks
-T6–T10 are completed.)*
+## 6. Caddy TLS via sslip.io (T6)
+
+**Component:** Caddy `2.10.2` (pinned; upstream overlay
+`supabase/docker-compose.caddy.yml`) terminating TLS on 443 for
+`api.<EC2_IP>.sslip.io` and proxying Supabase API paths to Kong. The
+certificate comes from Let's Encrypt via the **TLS-ALPN-01** challenge, which
+works with only port 443 open (no port 80 needed). sslip.io resolves the
+IP-embedded hostname with no DNS setup.
+
+Our Caddyfile (`supabase/volumes/proxy/caddy/Caddyfile`) proxies only
+`/auth/v1/*, /rest/v1/*, /graphql/v1, /realtime/v1/*, /storage/v1/*,
+/functions/v1/*, /mcp, /sso/*` — every other path (including Studio) is 404.
+
+### Rebuild
+
+On the EC2 host (after section 5):
+
+```
+cd bite-one/supabase
+sed -i "s|^COMPOSE_FILE=.*$|COMPOSE_FILE=docker-compose.yml:docker-compose.bite-one.yml:docker-compose.caddy.yml|" .env
+sudo docker compose up -d
+sudo docker logs supabase-caddy 2>&1 | grep -i "certificate obtained"
+```
+
+(`PROXY_DOMAIN` was already set to `api.<EC2_IP>.sslip.io` in section 5.)
+
+### Verify
+
+From any machine:
+
+```
+curl -sS -o /dev/null -w "%{http_code} verify=%{ssl_verify_result}\n" https://api.<EC2_IP>.sslip.io/rest/v1/
+# expect: 401 verify=0  (valid chain; 401 = Kong wants an API key)
+curl https://api.<EC2_IP>.sslip.io/          # expect: 404 (Studio not served)
+```
+
+### Teardown
+
+Remove `docker-compose.caddy.yml` from `COMPOSE_FILE` in `.env`, then
+`sudo docker compose up -d --remove-orphans`. The cert is ephemeral — nothing
+to clean up (Let's Encrypt certs expire on their own).
+
+---
+
+*(Sections for OIDC role, S3, CloudFront are appended as tasks T8–T10 are
+completed.)*
