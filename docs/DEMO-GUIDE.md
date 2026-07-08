@@ -38,21 +38,21 @@ up their own factory from SETUP.md §2–3 in ~20 minutes.
 **1. It answers over TLS from anywhere:**
 
 ```
-curl -s -o /dev/null -w "%{http_code} tls_ok=%{ssl_verify_result}\n" https://api.43.205.178.240.sslip.io/rest/v1/
+curl -s -o /dev/null -w "%{http_code} tls_ok=%{ssl_verify_result}\n" https://api.43.205.178.210.sslip.io/rest/v1/
 # 401 tls_ok=0  -> valid Let's Encrypt cert; Kong wants an API key
 ```
 
 **2. RLS proof, live (Node 18+, from any machine):**
 
 ```
-node scripts/rls-probe.mjs https://api.43.205.178.240.sslip.io <ANON_KEY>
+node scripts/rls-probe.mjs https://api.43.205.178.210.sslip.io <ANON_KEY>
 # 5/5 PASS — userB gets zero of userA's rows, forged insert -> 403
 ```
 
 **3. Show the actual database (Supabase Studio, SSH tunnel only):**
 
 ```
-ssh -i ~/.ssh/bite-one.pem -L 3001:localhost:3000 ubuntu@43.205.178.240
+ssh -i ~/.ssh/bite-one.pem -L 3001:localhost:3000 ubuntu@43.205.178.210
 # open http://localhost:3001 -> Table Editor -> notes (rows with user_id),
 # Authentication -> Users (the signed-up accounts)
 ```
@@ -60,15 +60,15 @@ ssh -i ~/.ssh/bite-one.pem -L 3001:localhost:3000 ubuntu@43.205.178.240
 **4. Show it is NOT publicly reachable (the security constraint):**
 
 ```
-curl -m 5 http://43.205.178.240:3000   # Studio: times out
-curl -m 5 telnet://43.205.178.240:5432 # Postgres: times out
-curl https://api.43.205.178.240.sslip.io/            # 404 — API paths only
+curl -m 5 http://43.205.178.210:3000   # Studio: times out
+curl -m 5 telnet://43.205.178.210:5432 # Postgres: times out
+curl https://api.43.205.178.210.sslip.io/            # 404 — API paths only
 ```
 
 **5. Data really lives on the EC2 Postgres:**
 
 ```
-ssh -i ~/.ssh/bite-one.pem ubuntu@43.205.178.240 \
+ssh -i ~/.ssh/bite-one.pem ubuntu@43.205.178.210 \
   "sudo docker exec supabase-db psql -U postgres -c 'select user_id, content, created_at from public.notes order by created_at desc limit 5;'"
 ```
 
