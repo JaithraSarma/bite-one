@@ -177,7 +177,10 @@ allowed non-open-source exceptions (authoring tool).
    - API key: the `gen` virtual key ($5 budget) from
      `scripts/create-virtual-keys.ps1`
 3. Add a model under that provider: API name `claude-sonnet-4-6`
-   (display name anything), context window 200000, max output 8192.
+   (display name anything), context window 200000, **max output 64000**.
+   Do not use a small max-output value: a generated file larger than the
+   cap truncates mid-file and Dyad retries the whole generation in a loop —
+   at ~45K prompt tokens per retry that burns ~$4/minute for zero code.
 4. Select that model as the active model.
 
 Dyad stores this in `%APPDATA%\dyad\sqlite.db` (tables
