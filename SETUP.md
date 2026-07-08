@@ -402,14 +402,23 @@ to clean up (Let's Encrypt certs expire on their own).
   rows for userA. Test-only credentials; this backend never holds real data.
 - `scripts/rls-probe.mjs` — the two-user isolation probe (Node 18+).
 - `docs/rls-probe-run.txt` — committed output of a passing run (AC 4).
+- `scripts/apply-migrations.sh` — idempotent migration runner: applies unapplied
+  `sql/*.sql` in filename order, each in one transaction, tracked in
+  `public._migrations` (revoked from `anon`/`authenticated`). A cron on the EC2
+  host pulls `master` every 2 minutes and runs it, so SQL merged through the
+  normal PR gate reaches the database automatically — no manual psql step.
 
 ### Rebuild + Verify
 
 ```
 # on the EC2 host
 cd ~/bite-one
-sudo docker exec -i supabase-db psql -U postgres -d postgres < sql/001_notes_rls.sql
+bash scripts/apply-migrations.sh          # applies everything in sql/, in order
 cd supabase && sh ../scripts/seed-test-users.sh
+
+# install the auto-migration cron (ubuntu user):
+( crontab -l 2>/dev/null | grep -v apply-migrations ; \
+  echo '*/2 * * * * cd /home/ubuntu/bite-one && git pull --ff-only -q origin master && bash scripts/apply-migrations.sh >> /home/ubuntu/migrate.log 2>&1' ) | crontab -
 
 # from any machine (Node 18+)
 node scripts/rls-probe.mjs https://api.<EC2_IP>.sslip.io <ANON_KEY>
@@ -419,7 +428,9 @@ node scripts/rls-probe.mjs https://api.<EC2_IP>.sslip.io <ANON_KEY>
 ### Teardown
 
 ```
-sudo docker exec -i supabase-db psql -U postgres -d postgres -c "drop table if exists public.notes cascade;"
+sudo docker exec -i supabase-db psql -U postgres -d postgres -c "drop table if exists public.notes cascade; drop table if exists public._migrations;"
+# remove the auto-migration cron:
+crontab -l | grep -v apply-migrations | crontab -
 # test users can be deleted in Studio (Auth) or via the GoTrue admin API
 ```
 
