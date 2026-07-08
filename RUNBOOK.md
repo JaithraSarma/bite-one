@@ -107,6 +107,21 @@ curl -X POST http://localhost:4000/key/update \
 Takes effect immediately — no restart, no new key, Dyad picks up where it
 left off.
 
+**If a key drains unexpectedly fast, diagnose before raising.** Pull the
+spend log and look at the call pattern:
+
+```
+curl "http://localhost:4000/spend/logs?api_key=<THE_KEY>" -H "Authorization: Bearer <LITELLM_MASTER_KEY>"
+```
+
+Many calls per minute with a large prompt and a tiny (identical) completion
+= a client retry loop, not real generation — raising the budget just feeds
+it. Known cause: Dyad's model `max output tokens` set smaller than a
+generated file → truncation → endless whole-file retries. Fix: set max
+output to 64000 in Dyad's model settings (restart Dyad), start a NEW chat.
+The gen key also carries `rpm_limit: 10` so any future storm gets throttled
+to a trickle instead of billing ~$4/minute.
+
 ## Supabase Studio (SSH tunnel only — never public)
 
 ```
